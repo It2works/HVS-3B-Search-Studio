@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Environments / secrets
+.env
+.venv/
+
+# Runtime data
+runs/
+checkpoints/
+
+# Node
+node_modules/
+
+# Local archives (Kaggle upload artifact, exported runs)
+backend.zip
+*.zip
