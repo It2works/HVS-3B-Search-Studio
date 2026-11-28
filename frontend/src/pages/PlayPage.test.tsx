@@ -1,3 +1,4 @@
+import { StrictMode } from 'react'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetDemoActive } from '../api/connection'
@@ -102,6 +103,27 @@ describe('PlayPage demo', () => {
       expect(
         document.querySelector('img[src="/demo-assets/final_view.jpg"]'),
       ).toBeInTheDocument()
+    },
+    15000,
+  )
+
+  it(
+    'auto-plays once when the app is mounted under StrictMode',
+    async () => {
+      render(
+        <StrictMode>
+          <SettingsProvider>
+            <PlayPage />
+          </SettingsProvider>
+        </StrictMode>,
+      )
+
+      await waitFor(
+        () => expect(screen.getByText('Within tolerance')).toBeInTheDocument(),
+        { timeout: 10000 },
+      )
+      expect(screen.queryByText('Cancelled')).not.toBeInTheDocument()
+      expect(screen.getAllByText(/4 steps/).length).toBeGreaterThan(0)
     },
     15000,
   )

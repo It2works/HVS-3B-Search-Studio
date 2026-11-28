@@ -117,9 +117,8 @@ export function PlayPage() {
     }
     dispatch({ type: 'RUN_STARTED', request })
     void startRef.current(request)
-    return () => {
-      autoStarted.current = false
-    }
+    // Keep the guard set across StrictMode's simulated remount: resetting it
+    // here starts a second stream that aborts the first one.
   }, [demoAtMount, scenarioAtMount, dispatch])
 
   async function handlePanoChange(event: ChangeEvent<HTMLInputElement>) {

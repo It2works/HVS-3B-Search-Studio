@@ -1,6 +1,6 @@
 /** Streams the prototype POST /api/run SSE response. Abortable, no EventSource. */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { markBackendReached, markDemoActive } from './connection'
 import { demoEvents } from './demoStream'
 import { consumeSseBuffer, isIgnorableEvent, normalizeEvent } from './sse'
@@ -242,8 +242,6 @@ export function useEpisodeStream(options: EpisodeStreamOptions = {}): EpisodeStr
     },
     [endpoint, apiKey, demo, demoDelayMs, finalImageUrl],
   )
-
-  useEffect(() => () => controllerRef.current?.abort(), [])
 
   return { ...state, start, cancel, reset }
 }
