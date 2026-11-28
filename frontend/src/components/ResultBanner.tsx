@@ -9,54 +9,45 @@ interface ResultBannerProps {
   groundTruth?: Pose | null
 }
 
+/** One quiet line: did the final heading land inside tolerance? */
 export function ResultBanner({ result, task, groundTruth }: ResultBannerProps) {
-  if (!result) {
-    return (
-      <section className="result result--pending" aria-label="Run result">
-        <span className="result__status">In progress</span>
-        <p>Waiting for the agent to submit a pose.</p>
-      </section>
-    )
-  }
+  if (!result) return null
 
   const scored =
     groundTruth && result.final
       ? evaluateAgainstGroundTruth(task, result.final, groundTruth)
       : null
   const success = scored ? scored.success : result.success
-  const outcome =
-    success === null || success === undefined
+  const failed = result.status === 'error'
+  const outcome = failed
+    ? 'Run failed'
+    : success === null || success === undefined
       ? 'Unscored'
       : success
         ? 'Within tolerance'
         : 'Outside tolerance'
+  const tone = failed ? 'error' : success ? 'success' : 'neutral'
+  const detail = scored
+    ? task === 'HPS'
+      ? `Yaw error ${angle.format(scored.dyaw)}°, limit ${scored.toleranceYaw}°. Pitch ignored.`
+      : `Yaw error ${angle.format(scored.dyaw)}°/${scored.toleranceYaw}°, pitch error ${angle.format(scored.dpitch)}°/${scored.tolerancePitch}°.`
+    : undefined
 
   return (
-    <section className={`result result--${result.status}`} aria-label="Run result">
-      <div className="result__main">
-        <span className="result__status">{result.status.replace('_', ' ')}</span>
-        <strong>{outcome}</strong>
-        <span className="result__task">{task} task</span>
-      </div>
-      {result.final ? (
-        <p className="readout result__pose">
-          Final yaw {angle.format(result.final.yaw)}°, pitch {angle.format(result.final.pitch)}°
-        </p>
-      ) : (
-        <p className="result__pose">No final pose recorded.</p>
+    <span
+      className={`verdict verdict--${tone}`}
+      role="status"
+      aria-label="Run result"
+      title={detail}
+    >
+      <span className="verdict__dot" aria-hidden="true" />
+      <span>{outcome}</span>
+      {result.final && (
+        <span className="verdict__pose">
+          yaw {angle.format(result.final.yaw)}° · pitch {angle.format(result.final.pitch)}°
+        </span>
       )}
-      {scored && (
-        <p className="readout result__tolerance" aria-live="polite">
-          {task === 'HPS'
-            ? `Yaw error ${angle.format(scored.dyaw)}°, limit ${scored.toleranceYaw}°. Pitch ignored.`
-            : `Yaw error ${angle.format(scored.dyaw)}°/${scored.toleranceYaw}°, pitch error ${angle.format(scored.dpitch)}°/${scored.tolerancePitch}°.`}
-        </p>
-      )}
-      {result.error && (
-        <p className="result__error" role="alert">
-          {result.error}
-        </p>
-      )}
-    </section>
+      {result.error && <span className="verdict__error">{result.error}</span>}
+    </span>
   )
 }

@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { resetDemoActive } from '../api/connection'
+import { markDemoActive, resetDemoActive } from '../api/connection'
 import { SettingsProvider } from '../settings/SettingsContext'
 import { DEFAULT_SETTINGS, SETTINGS_KEY } from '../settings/store'
 import { ConnectionChip } from './ConnectionChip'
@@ -20,26 +20,27 @@ describe('ConnectionChip', () => {
   })
   afterEach(cleanup)
 
-  it('shows Demo (simulated) when demo mode is enabled', () => {
+  it('shows Demo when demo mode is enabled', () => {
     renderChip()
-    expect(screen.getByText('Demo (simulated)')).toBeInTheDocument()
+    expect(screen.getByText('Demo')).toBeInTheDocument()
   })
 
-  it('shows Live (Prototype) with demo mode off', () => {
+  it('shows Live with demo mode off', () => {
     localStorage.setItem(
       SETTINGS_KEY,
       JSON.stringify({ ...DEFAULT_SETTINGS, demoMode: false }),
     )
     renderChip()
-    expect(screen.getByText('Live (Prototype)')).toBeInTheDocument()
+    expect(screen.getByText('Live')).toBeInTheDocument()
   })
 
-  it('stays live even without a backend URL configured', () => {
+  it('shows Demo once a simulated run has played', () => {
     localStorage.setItem(
       SETTINGS_KEY,
-      JSON.stringify({ ...DEFAULT_SETTINGS, backendUrl: '', demoMode: false }),
+      JSON.stringify({ ...DEFAULT_SETTINGS, demoMode: false }),
     )
+    markDemoActive()
     renderChip()
-    expect(screen.getByText('Live (Prototype)')).toBeInTheDocument()
+    expect(screen.getByText('Demo')).toBeInTheDocument()
   })
 })

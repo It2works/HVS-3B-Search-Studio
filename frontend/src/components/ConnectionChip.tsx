@@ -6,16 +6,16 @@ import { useSettings } from '../settings/useSettings'
 export function ConnectionChip() {
   const { settings } = useSettings()
   const demoActive = useDemoActive()
-  const label = settings.demoMode || demoActive ? 'Demo (simulated)' : 'Live (Prototype)'
+  const demo = settings.demoMode || demoActive
 
   return (
     <span
-      className="connection connection--live"
+      className={`connection${demo ? ' connection--demo' : ''}`}
       role="status"
-      title="Runs are available"
+      title={demo ? 'Runs are simulated in this browser' : 'Connected to the prototype backend'}
     >
       <span className="connection__dot" aria-hidden="true" />
-      {label}
+      {demo ? 'Demo' : 'Live'}
     </span>
   )
 }

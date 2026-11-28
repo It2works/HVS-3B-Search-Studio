@@ -138,7 +138,7 @@ describe('useEpisodeStream', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
     expect(result.current.phase).toBe('done')
-    expect(result.current.events).toHaveLength(6)
+    expect(result.current.events).toHaveLength(10)
     expect(result.current.requestSent).toBe(true)
   })
 
@@ -185,7 +185,7 @@ describe('useEpisodeStream', () => {
     })
     expect(fetchMock).not.toHaveBeenCalled()
     expect(result.current.phase).toBe('done')
-    expect(result.current.events).toHaveLength(6)
+    expect(result.current.events).toHaveLength(10)
   })
 
   it('adds the demo images when a stream finishes without any', async () => {
@@ -199,7 +199,7 @@ describe('useEpisodeStream', () => {
     )
 
     await act(async () => {
-      await result.current.start(REQUEST)
+      await result.current.start({ ...REQUEST, instruction: 'Find the bus' })
     })
     expect(result.current.phase).toBe('done')
     const imageSteps = result.current.events.filter(
@@ -221,7 +221,7 @@ describe('useEpisodeStream', () => {
     })
     expect(result.current.phase).toBe('done')
     expect(result.current.error).toBeNull()
-    expect(result.current.events).toHaveLength(6)
+    expect(result.current.events).toHaveLength(10)
     expect(result.current.requestSent).toBe(true)
   })
 
