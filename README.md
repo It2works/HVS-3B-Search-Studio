@@ -192,4 +192,4 @@ mode works end to end. After that, the Compare page and the bench routes.
 
 ## License
 
-No license yet. Add one before distributing this or accepting contributions.
+MIT. See [LICENSE](LICENSE).
