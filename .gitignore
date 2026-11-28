@@ -21,3 +21,14 @@ node_modules/
 # Local archives (Kaggle upload artifact, exported runs)
 backend.zip
 *.zip
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs and coverage
+*.log
+.coverage
+htmlcov/

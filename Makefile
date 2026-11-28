@@ -25,7 +25,8 @@ check:
 	cd "$(FRONTEND_DIR)" && npx tsc --noEmit
 	cd "$(FRONTEND_DIR)" && npm run test
 
-# dev-backend: FastAPI dev server (app module arrives with the API implementation)
+# dev-backend: FastAPI dev server with the scripted mock model (no GPU)
+# Requires HVS_API_KEY, e.g. `HVS_API_KEY=dev-key make dev-backend`
 dev-backend:
 	cd "$(BACKEND_DIR)" && $(BACKEND_PY) -m uvicorn hvs_backend.main:app --reload --host 0.0.0.0 --port 8000
 
