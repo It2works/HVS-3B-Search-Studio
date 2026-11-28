@@ -1,325 +1,195 @@
 # HVS-3B Search Studio
 
-A web studio for watching and replaying **HVS-3B** humanoid search episodes.
-The model stands inside a 360° panorama, sees only a narrow perspective view,
-and decides how to turn its head until the target is centred.
+**A small web app for watching a 3B vision model search a 360° scene.**
 
-The app is **replay-first**: every episode is saved as JSON plus step images, so
-the interface works with no GPU and no backend. Live inference against the real
-models is an optional extra that runs on Kaggle.
+![The Play page running the bundled demo](docs/media/play-demo.gif)
 
-![HVS-3B demo panorama](frontend/public/demo-assets/panorama.jpg)
+HVS-3B is a fine-tune of Qwen2.5-VL-3B for embodied search. It stands in the
+middle of an equirectangular panorama, sees only a narrow perspective crop, and
+has to decide how to turn its head. This studio makes that loop visible: the
+view, the model's reasoning, the pose, and the final answer, step by step.
 
----
+I built it around two ideas. The browser should be able to replay a finished
+episode with no GPU and no backend. The server should own the model loop, so the
+frontend never touches weights or model-provider keys.
 
-## Status
+The GIFs and screenshots below are screen recordings of the app running locally,
+not mockups.
 
-| Area | State |
-| --- | --- |
-| Frontend Play page (animated panorama, trace, replay) | Working |
-| Bundled demo run (no GPU, no backend) | Working |
-| FastAPI contract API (episodes, SSE, panoramas, compare) | Working |
-| Episode persistence and replay files | Working |
-| Transformers / OpenAI-compatible / Mock adapters | Working |
-| Compare and Bench pages | Placeholder UI |
-| Live Play wiring to the contract API | Not finished — see [Known limitations](#known-limitations) |
+## What you're looking at
 
-The demo is the supported path today. The backend and the model loop are real
-and tested; the Play page still streams from an older prototype `POST /api/run`
-shape that this backend does not expose.
+The GIF above is the bundled demo. It runs entirely in the browser against a
+panorama of the Puente de Piedra in Zaragoza. The model is scripted, but the
+playback is the same code path a real run uses: a thought is typed out, the head
+turns, the next view is rendered, and the episode ends with a verdict.
 
----
+The real model is not bundled. Running it needs a GPU and the weights; there is
+a section on that below.
 
-## What it does
+## The two tasks
 
-HVS-3B is a 3B vision-language model (a Qwen2.5-VL-3B fine-tune) trained for two
-tasks inside equirectangular panoramas:
+HVS-3B is evaluated on two tasks:
 
-- **HOS** — object search. Success when the submitted view is within **30° yaw**
-  and **20° pitch** of the target.
-- **HPS** — path/heading search. Success when the submitted heading is within
-  **10° yaw** of the target (azimuth only).
+- **HOS (object search).** Turn until the target object is centred, then submit.
+  A submission counts if it is within 30° yaw and 20° pitch of the ground truth.
+- **HPS (path search).** Turn toward the direction you would walk. A submission
+  counts if it is within 10° yaw. Pitch is ignored.
 
-At each step the model receives the current 448×448 perspective view, the
-instruction, and the last two turns of context. It answers with reasoning in
-`<think>` and one action in `<answer>`:
+Yaw is `[0, 360)` clockwise and pitch is `[-90, 90]`, positive up. The model
+answers with a thought in `<think>` and one action in `<answer>`: either
+`rotate(dyaw, dpitch)` or `submit(yaw, pitch)`.
 
-- `rotate(dyaw, dpitch)` — turn relative to the current pose.
-- `submit(yaw, pitch)` — finish at an absolute pose.
+## How an episode runs
 
-The backend renders the view, calls the model, parses the action, updates the
-pose, saves the step image, and repeats until the model submits or the step
-budget runs out.
+![The panorama view sweeping toward the target](docs/media/panorama-sweep.gif)
 
----
+1. The browser uploads a panorama. The server caps it at 4096 px wide and stores
+   it as JPEG.
+2. For each step, the server renders a 448×448 perspective view at the current
+   pose.
+3. It builds a chat prompt from the official system prompt, the instruction, and
+   the last two turns, then calls the model adapter.
+4. The parser pulls out the first thought and the first valid action. Malformed
+   output marks the step as failed instead of crashing the episode.
+5. The pose is updated, the step image is saved, and an SSE event goes out.
+6. The episode stops on `submit`, the step limit, an error, or cancellation.
+   Everything is written to `runs/<episode_id>/`.
 
-## Architecture
+A completed run looks like this:
 
-```text
-Browser (React + Vite)                         Kaggle notebook (T4 x2)
-┌──────────────────────────┐    HTTPS + SSE   ┌─────────────────────────────┐
-│ Play / Compare / Bench   │ ◀──────────────▶ │ FastAPI app                 │
-│ Settings (localStorage)  │   cloudflared    │  ├─ hvs-3b-sft  (cuda:0)    │
-│ Demo stream (no backend) │    tunnel        │  └─ hvs-3b      (cuda:1)    │
-└──────────────────────────┘                  │ runs/  → episode.json + JPEG│
-                                              └─────────────────────────────┘
-```
+![Completed episode with a within-tolerance result](docs/media/result.png)
 
-Key decisions:
+## Running it
 
-1. **Contract first.** `docs/CONTRACT.md` defines the run file and the REST/SSE
-   API. Both sides are built against it.
-2. **Replay first, live second.** Saved runs replay with no GPU, so the demo
-   survives a dead Kaggle session.
-3. **The server owns the loop.** The browser never sees model URLs or weights.
-4. **Models are injected.** `create_app(adapters, ...)` receives models that are
-   already in memory. Nothing is loaded twice.
-5. **One adapter interface.** `generate(messages, images) -> str`, implemented
-   by `TransformersAdapter`, `OpenAICompatAdapter`, and `MockAdapter`.
-6. **Never fabricate the prompt.** If `backend/prompts/official.txt` is missing
-   or empty, a live episode fails with a clear error instead of using a
-   made-up prompt.
-
----
-
-## Repository layout
-
-```text
-.
-├── backend/                  FastAPI service and episode loop
-│   ├── hvs_backend/
-│   │   ├── adapters/         Transformers, OpenAI-compatible, Mock
-│   │   ├── agent.py          Async episode runner (SSE events)
-│   │   ├── api.py            REST + SSE surface
-│   │   ├── geometry.py       Yaw wrap, pitch clamp, success checks
-│   │   ├── main.py           Local mock-model dev server (no GPU)
-│   │   ├── panorama.py       Perspective view rendering
-│   │   ├── parser.py         Tolerant <think>/<answer> parser
-│   │   ├── prompting.py      Official prompt loading and messages
-│   │   ├── serve.py          Notebook launcher + cloudflared tunnel
-│   │   └── store.py          Atomic run-file persistence
-│   ├── prompts/official.txt  Required prompt (never auto-generated)
-│   └── tests/                138 pytest tests
-├── frontend/                 React 18 + TypeScript + Vite
-│   ├── public/demo-assets/   Bundled 360° panorama and target view
-│   └── src/
-│       ├── api/              SSE client, demo stream, typed contract
-│       ├── components/       Panorama stage, trace, result banner
-│       ├── pages/            Play, Compare, Bench, Settings
-│       ├── settings/         Versioned localStorage settings
-│       └── state/            Episode reducer and playback motion
-├── kaggle/                   Notebook helper and cell-by-cell guide
-├── docs/
-│   ├── CONTRACT.md           Run-file and API contract
-│   └── design-brief.docx     Original frontend/backend plan
-├── AGENTS.md                 Repo rules and architecture decisions
-├── Makefile                  install / check / dev entry points
-└── .env.example              Environment variable template
-```
-
----
-
-## Quick start
-
-### Prerequisites
-
-- **Python 3.10+** (3.12 recommended)
-- **Node.js 18+** (20 LTS recommended) and npm
-- No GPU needed for the demo or the test suite
-
-### Install
+You need Python 3.10+ and Node 18+. No GPU for the demo or the tests.
 
 ```bash
 git clone https://github.com/It2works/HVS-3B-Search-Studio.git
 cd HVS-3B-Search-Studio
 make install
-```
-
-`make install` creates `backend/.venv`, installs the backend in editable mode,
-and runs `npm install` in `frontend/`.
-
-### Run the demo (no backend)
-
-```bash
 make dev-frontend
 ```
 
-Open <http://localhost:5173>. Demo mode is on by default: the page plays a
-scripted episode against the bundled panorama immediately.
+Open <http://localhost:5173>. Demo mode is on by default, so the run starts on
+its own.
 
-To start the API too:
+If you want the API too, the repo includes a local server that uses a scripted
+mock model:
 
 ```bash
 HVS_API_KEY=dev-key make dev-backend
-# in another terminal
-make dev-frontend
-```
-
-Check it is up:
-
-```bash
 curl -H "X-API-Key: dev-key" http://localhost:8000/api/health
 ```
 
-The local dev server uses `MockAdapter`, a deterministic scripted model, so it
-needs no GPU. It exists to exercise the API and the frontend shell.
+The local server is only for exercising the API. It does not load HVS-3B.
 
 ### Configuration
 
-| Variable | Default | Used by |
-| --- | --- | --- |
-| `HVS_API_KEY` | — (required) | Backend; every `/api/*` request |
-| `FRONTEND_ORIGIN` | `http://localhost:5173` | Backend CORS allow-list |
-| `HVS_RUNS_DIR` | `./runs` | Backend episode storage |
+The backend reads `HVS_API_KEY` (required), `FRONTEND_ORIGIN` (CORS, default
+`http://localhost:5173`), and optionally `HVS_RUNS_DIR` (default `./runs`). The
+frontend keeps its backend URL, key, and defaults in `localStorage`; you can
+change them on the Settings page.
 
-Copy `.env.example` as a reference. The backend does not load `.env` files
-automatically; export the variables or prefix the command.
+## The backend
 
-In the app, **Settings** stores the backend URL, API key, model defaults, and
-the demo-mode toggle in `localStorage`. Use **Settings → Reset** to clear them.
+The FastAPI app is built around one adapter interface:
 
----
+```python
+generate(messages, images) -> str
+```
 
-## How an episode runs
+There are three implementations. `TransformersAdapter` wraps a model and
+processor that are already loaded in memory. `OpenAICompatAdapter` talks to a
+vLLM or other OpenAI-compatible endpoint. `MockAdapter` replays a fixed script
+and is what the local server uses.
 
-1. The client uploads a panorama (`POST /api/panoramas`, JPEG/PNG, ≤ 40 MB,
-   downscaled to 4096 px wide).
-2. `POST /api/episodes` validates the task/model, loads the panorama, and
-   starts an async episode.
-3. For each step the backend renders a 448×448 view at the current pose,
-   builds messages from the official prompt plus the last two turns, and calls
-   the adapter.
-4. The parser extracts the first `<think>` block and the first valid
-   `rotate`/`submit` action. Malformed output becomes a failed step, never a
-   crashed episode.
-5. The pose is updated (yaw wrapped to `[0, 360)`, pitch clamped to
-   `[-90, 90]`), the step image is written, and an SSE event is published.
-6. The episode ends on `submit`, `max_steps`, `error`, or cancellation. The run
-   file and images are written atomically to `runs/<episode_id>/`.
+The notebook owns model loading and passes the adapters into `create_app(...)`,
+so the backend never downloads weights or reads a key from disk. Episode files
+are written atomically: `episode.json`, `panorama.jpg`, and `step_<t>.jpg`. The
+same SSE stream is used for replay, so the frontend can show a saved run without
+a model.
 
-Replay is the same event stream reconstructed from the stored run file, so the
-frontend needs no model to show an episode.
+The contract is in [`docs/CONTRACT.md`](docs/CONTRACT.md). The main routes are
+`POST /api/panoramas`, `POST /api/episodes`, `GET /api/episodes/{id}/events`,
+`GET /api/episodes/{id}`, and `POST /api/compare`. Every route except the SSE
+query-string variant expects `X-API-Key`.
 
----
+## Running the real models
 
-## API overview
+The models are `humanoid-vstar/HVS-3B` and `humanoid-vstar/HVS-3B-sft-only`.
+They are Qwen2.5-VL-3B fine-tunes. The reference setup is a Kaggle notebook with
+two T4s, one model per GPU, and a `cloudflared` quick tunnel.
 
-All routes live under `/api` and require `X-API-Key`. The SSE route also
-accepts `?api_key=` because `EventSource` cannot set headers.
+[`kaggle/NOTEBOOK_CELLS.md`](kaggle/NOTEBOOK_CELLS.md) has the cell-by-cell
+recipe. [`kaggle/run_studio.py`](kaggle/run_studio.py) is the helper that starts
+uvicorn, opens the tunnel, and prints the public URL. Put `HVS_API_KEY` in
+Kaggle Secrets; don't paste it into a cell.
 
-| Method | Route | Purpose |
-| --- | --- | --- |
-| `GET` | `/health` | Loaded models and claimed GPUs |
-| `POST` | `/panoramas` | Upload a panorama (multipart) |
-| `GET` | `/panoramas/{id}/image` | Fetch a stored panorama |
-| `POST` | `/episodes` | Start an episode |
-| `GET` | `/episodes` | List episode summaries |
-| `GET` | `/episodes/{id}` | Fetch the run file |
-| `GET` | `/episodes/{id}/events` | SSE: live or replayed events |
-| `POST` | `/episodes/{id}/cancel` | Cancel a running episode |
-| `GET` | `/episodes/{id}/steps/{t}/image` | The JPEG the model saw |
-| `POST` | `/compare` | Start two episodes on one panorama |
+Two things to know: a GPU session lasts 12 hours at most, and the tunnel URL
+changes every session. Export `runs/` before the session ends. The saved folders
+replay locally with no GPU.
 
-SSE event types: `episode_started`, `step_started`, `step_completed`,
-`episode_finished`, `error`. The full payloads are in
-[`docs/CONTRACT.md`](docs/CONTRACT.md).
+## What works, and what doesn't yet
 
-`/api/bench/*` is reserved in the contract but not implemented.
+The Play page, the demo stream, the episode loop, the parser, the geometry, the
+storage, the adapters, and the contract API are implemented and tested. The
+bundled demo is the most reliable way to see the app.
 
----
+The rough edges:
 
-## Kaggle live mode
+- The Play page still posts to an older `POST /api/run` prototype stream. The
+  backend implements the contract routes (`POST /api/episodes` plus
+  `GET /api/episodes/{id}/events`), but I haven't connected the two yet. Demo
+  mode is unaffected.
+- Compare and Bench are placeholder pages. `/api/compare` exists;
+  `/api/bench/*` does not.
+- The API key lives in browser `localStorage`. That is fine for a Kaggle tunnel
+  demo, not for a public deployment.
+- The bundled panorama is a demo scene, not a benchmark sample.
 
-The real models run in a Kaggle notebook with **two T4 GPUs**:
+I would rather leave these visible than pretend the whole thing is finished.
 
-- `hvs-3b-sft` → `humanoid-vstar/HVS-3B-sft-only` on `cuda:0`
-- `hvs-3b` → `humanoid-vstar/HVS-3B` on `cuda:1`
-
-The notebook loads the models once, wraps them with `TransformersAdapter`, and
-calls `create_app(adapters, runs_dir, api_key, frontend_origin)`. A
-`cloudflared` quick tunnel exposes the API to the browser.
-
-See [`kaggle/NOTEBOOK_CELLS.md`](kaggle/NOTEBOOK_CELLS.md) for the cell-by-cell
-recipe and [`kaggle/run_studio.py`](kaggle/run_studio.py) for the helper.
-
-Notes:
-
-- Put `HVS_API_KEY` in **Kaggle Secrets**, never in a cell or the repo.
-- A GPU session ends after 12 hours (often earlier when idle), and the tunnel
-  URL changes every session. Re-run the cells and update the backend URL in
-  **Settings**.
-- Export `runs/` before the session dies. Those folders replay locally forever.
-- The backend refuses to start a live episode if
-  `backend/prompts/official.txt` is missing or empty.
-
----
-
-## Testing and linting
+## Tests
 
 ```bash
 make check
 ```
 
-This runs, in order:
+This runs ruff and pytest on the backend, then eslint, `tsc --noEmit`, and
+vitest on the frontend. At the moment that is 138 backend tests and 66 frontend
+tests. The angle math, parser, geometry, storage, API, Kaggle helper, playback,
+and demo stream all have their own cases, including yaw wrap-around and
+malformed model output.
 
-- `ruff check` on the backend
-- `pytest` on the backend (138 tests, no GPU)
-- `eslint` on the frontend
-- `tsc --noEmit` (TypeScript strict)
-- `vitest run` (65 tests)
+## A few design notes
 
-Individual commands:
+**Replay first.** A saved episode is just JSON and JPEGs, so the demo survives a
+dead Kaggle session and a reviewer can open it without a GPU.
 
-```bash
-cd backend && .venv/bin/python -m pytest -q
-cd frontend && npm run lint
-cd frontend && npm run test
-cd frontend && npm run build
-```
+**The server owns the loop.** The browser never sees model URLs, weights, or the
+key used for the model provider.
 
-Angle math, parsing, geometry, storage, the API, the Kaggle helper, playback,
-and the demo stream all have dedicated tests, including wrap-around at 0°/360°,
-pitch clamping, and malformed model output.
+**The prompt is not generated.** `backend/prompts/official.txt` has to exist and
+be non-empty, or a live episode fails with a clear error. I didn't want a
+fallback prompt quietly changing the experiment.
 
----
-
-## Known limitations
-
-- **Live Play wiring.** The Play page posts to a prototype `POST /api/run` and
-  consumes inline `image_url` values. The backend implements the contract API
-  (`POST /api/episodes` + `GET /api/episodes/{id}/events`) instead. Demo mode
-  is unaffected. To finish live mode, either add the compatibility route or
-  move `useEpisodeStream` onto the contract endpoints.
-- **Compare and Bench are placeholders.** `/api/compare` exists, but the
-  Compare page does not call it; `/api/bench/*` is not implemented.
-- **The API is a prototype.** The key lives in browser `localStorage` and is
-  sent to the backend. It is suitable for a Kaggle tunnel demo, not for an
-  untrusted public deployment.
-- **The demo assets are illustrative.** `panorama.jpg` and `final_view.jpg` are
-  a bundled scene, not a benchmark sample.
-
----
+**Models are injected.** The notebook passes in objects that are already in
+memory. The backend does not load a second copy.
 
 ## Models and data
 
-- Models: [`humanoid-vstar/HVS-3B`](https://huggingface.co/humanoid-vstar/HVS-3B)
-  and [`humanoid-vstar/HVS-3B-sft-only`](https://huggingface.co/humanoid-vstar/HVS-3B-sft-only)
-- Benchmarks: `humanoid-vstar/hstar_bench` (and `hstar_bench_png`)
-- The models are Qwen2.5-VL-3B fine-tunes; load them in fp16/BF16 and cap image
-  tokens at 448×448.
+- [`humanoid-vstar/HVS-3B`](https://huggingface.co/humanoid-vstar/HVS-3B)
+- [`humanoid-vstar/HVS-3B-sft-only`](https://huggingface.co/humanoid-vstar/HVS-3B-sft-only)
+- Benchmarks: `humanoid-vstar/hstar_bench`, `humanoid-vstar/hstar_bench_png`
 
-The official prompt is required and is read verbatim from
-`backend/prompts/official.txt`. The backend has no fallback prompt by design.
+The original project plan is in [`docs/design-brief.docx`](docs/design-brief.docx).
+The repo rules I worked against are in [`AGENTS.md`](AGENTS.md).
 
----
+## What I'd do next
 
-## Contributing
-
-Read [`AGENTS.md`](AGENTS.md) before changing the architecture. The short
-version: contract first, small commits, tests for every module, no secrets, and
-never invent the prompt.
+The first thing is to connect the Play page to the contract endpoints so live
+mode works end to end. After that, the Compare page and the bench routes.
 
 ## License
 
-No license has been added yet. Add one before distributing or accepting
-external contributions.
+No license yet. Add one before distributing this or accepting contributions.
